@@ -1,0 +1,527 @@
+
+
+#include "FileDirectory.h"
+#include <iostream>
+#define EOFile 0xffff
+int firstClusterAddress;
+int numOfClustersNeeded;
+int remainCount;
+int addressPtr;
+int dataPtr ;
+int dataPtr1;
+int dataPtr2;
+int dataPtr3;
+int DataPtr4;
+int sectors[256];
+int num1;
+int num2;
+int num3;
+int num4;
+
+
+using namespace std;
+FileDirectory::FileDirectory()
+{
+	//purpose	: to initialize all entries in the fileDirectory and FAT16 to be 0; i.e.safe values.
+	for (int i = 0; i < 4; i++)
+		for (int j = 0; j < 32; j++) fileDirectory[i][j] = 0;
+	for (int i = 0; i < 256; i++) FAT16[i] = 0;  //Fat table
+	for (int i = 0; i < 1024; i++) data[i] = 0;
+	remainCount = 256;
+}
+
+
+
+
+
+
+bool FileDirectory::create(char   filename[], int numberBytes)
+{
+	//	(1)	to check if there is an unused entry in the File Directory;  (i.e.the first character of the file name in the File Directory is zero).Return false if not true.
+	for (int i = 0; i < 4; i++)
+	{
+		if (fileName[0] != 0)
+			return false;
+	}
+
+	int count = 0;
+	//		(2)	to check if there are enough unused clusters to store the file with the numberBytes. Return false if not true.
+	// 4 bytes each clusters
+	for (int i = 0; i < 4; i++)
+	{
+		if (FAT16[i] == 0)              //unused clusters. since this is the first time ever
+			count++;
+	}
+	if (count < (numberBytes / 4))  return false;	    
+
+	else true;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+bool FileDirectory::deleteFile(char   filename[])
+{
+	//	(0)	to check if the file to be deleted; filename[]; is in the Directory.If not; return false.
+	int i, j;
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 8; j++)
+		{
+			if (fileDirectory[i][j] != filename[j])   break;       //check if first 8 bytes (name) are the same
+		}
+		if (j == 8) break;
+	}
+	if (i == 4) return false;     //check in all 4 sections
+
+
+	// i = section that filename currently in
+	//	(1)	to change the first character of the file name in the File Directory to be zero;
+	fileDirectory[i][0] = 'NULL';
+
+
+
+
+	//	(2)	to change all entries of the clusters of this file in the FAT to 1; i.e.; unused.
+	int firstSector = (fileDirectory[i][27] << 8) + fileDirectory[i][26];     //16 bit 
+	sectors[0] = firstSector;             //list of next sectors , max = 256
+
+
+	for (i = 0; FAT16[i] != EOFile; i++)
+	{
+		sectors[i] = FAT16[sectors[i]];                  // find the sequence of sectors, 
+	}
+	for (int j = 0; sectors[j] != EOFile; j++)
+	{
+		FAT16[sectors[j]] = 1;                           // After delete Files --> FAT table are free, ready to be overwritten
+	}
+
+
+	// make numberBytes of data from dataPtr backward to 0
+	int currentNumberBytes;
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 8; j++)
+		{
+			if (fileDirectory[i][j] == filename[j])   break;       //check if first 8 bytes (name) are the same
+		}
+		if (j == 8) break;
+	}
+	if (i == 0) currentNumberBytes = num1;
+	else if (i == 1) currentNumberBytes = num2;
+	else if (i == 2) currentNumberBytes = num3;
+	else currentNumberBytes = num4;
+
+
+	for (int b = dataPtr; b > (dataPtr - currentNumberBytes); b--)
+	{
+		data[b] = 0;            //data on bit b is written
+	}
+	dataPtr -= currentNumberBytes;
+
+}
+
+
+
+
+
+
+bool FileDirectory::read(char   filename[])
+{
+	//purpose: to read  of data from data[] array from the file with the specified file name.
+		//(0)	to check if the file to be read filename[], is in the Directory.If not; return false.
+	int i, j;
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 8; j++)
+		{
+			if (fileDirectory[i][j] != filename[j]) break;
+		}
+		if (j == 8) break;
+	}
+	//3.2 if not found, return false,
+	if (i == 4) return false;
+
+
+	//(1)	use the file name to get the file information from the File Directory; including date; time; number of bytes and the first cluster address;
+	int year, month, day, hour, minute, second, date, time;
+
+	date = (fileDirectory[i][25] << 8) + fileDirectory[i][24];
+	//bit24 =month
+	//bit25 =year
+	//-> y 7 bit
+	// mm 4 bit
+	// dd 5 bit
+	// yx7mx4dx5
+
+	year = 1980 + date >> 9;
+	//   yyyyyyymmmmddddd
+	//>>9 
+	//-> 0000000000yyyyyy
+	// +            (1980)2
+	//=  0000000000yyyyyy
+	month = (date & 0x01e0) >> 5;//MSB
+	//   yyyyyyymmmmddddd
+	// & 0000000111110000
+	// = 0000000mmmmm0000
+
+	day = date & 0x001f; //5 LSB
+
+	//   yyyyyyymmmmddddd
+	// & 0000000000011111
+    // ->00000000000ddddd
+
+	time = fileDirectory[i][24] << 8 + fileDirectory[i][23];
+	hour = time >> 11;
+	//   hhhhhmmmmmmsssss
+	//>>11
+	//   00000000000hhhhh
+
+	minute = (time& 0x7c) >> 5;
+	//  hhhhhmmmmmmsssss
+	//& 0000011111100000   (0x07c0)
+	//  00000mmmmmm00000 
+	second = (time & 0x001f) << 1;
+
+	//  hhhhhmmmmmmsssss
+	//  0000000000011111   (0x01f0)
+    //  00000000000sssss
+	int sectors[256];
+	// (2)	use the first cluster address to get all the cluster addresses of this file from the FAT - 16;
+	sectors[0] = (fileDirectory[i][27] << 8) + fileDirectory[i][26];
+	//(3)	get all the remaining cluster addresses from the FAT to read the data from the disk / flash memory.
+	
+
+
+	for (int s = 0; FAT16[i] != EOFile; s++)
+	{
+		sectors[s] = FAT16[sectors[s]];          // sequence is copied from FAT table
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+bool FileDirectory::write(char   filename[], int numberBytes, char data[], int year, int month, int day, int hour, int minute, int second)
+{
+	//purpose: to write numberBytes bytes of data from data[] array into the file with the specified file name
+
+	for (int s = 0; s < 256; s++)
+		sectors[s] = 0;
+
+	//(0)	to look for the first unused entry(0 or 1) in the FAT - 16, and use it as the First Cluster Address.
+	int x;
+	for (x = 0; x < 255; x++)
+	{
+		if (FAT16[x] == 0 || FAT16[x] == 1) {
+			firstClusterAddress = x;
+			break;
+		}
+	}
+	int i = 0;
+	//(1) wrte next sector addresses into FAT16.
+	/*
+	 // write 40 bytes, need 10 clusters, cluster 11 = EOF
+	 FAT16[] = {firstClusterAddress,firstClusterAddress+1, ... ,firstClusterAddress+11}
+	 
+	
+	*/
+	
+	if (numberBytes %4 ==0)   numOfClustersNeeded = numberBytes / 4;
+	else numOfClustersNeeded= (numberBytes / 4) + 1;              //example 41 bytes need 11 clusters
+	remainCount -= numOfClustersNeeded;
+
+
+	int clusterAddress[256] = {};                 //reset every time
+	clusterAddress[0] = firstClusterAddress;
+	addressPtr = firstClusterAddress;
+
+	int index =0;                                // cluster address index start with 1, i=0 : firstcluster address
+	FAT16[addressPtr + numOfClustersNeeded + 1] = EOFile;   // example 41 bytes, FAT16[firstcluster+10] = EOFile       
+
+	//dataPTRs Controller
+	for (int b = dataPtr; b < (dataPtr+ numberBytes); b++)
+	{
+		data[b] = 1;            //data on bit b is written
+	}
+	dataPtr += numberBytes;
+
+
+	// num1 num2 num3 num4 update
+	int m,n;
+	for (m = 0; m < 4; m++) {
+		for (n = 0; n< 8; n++)
+		{
+			if (fileDirectory[m][n] != filename[n]) break;
+		}
+		if (n == 8) break;
+	}
+	//3.2 if not found, return false,
+	if (m== 4) return false;
+
+
+	if (m == 0) num1 = numberBytes;
+	else if (m == 1) num2 = numberBytes;
+	else if (m == 2) num3 = numberBytes;
+	else num4 = numberBytes;
+
+    // index of FAT16
+	while (numOfClustersNeeded >= 0)
+	{
+		FAT16[x++] = 2;
+		numOfClustersNeeded--;
+		clusterAddress[addressPtr++]= addressPtr++;
+
+	}
+	
+	
+
+
+	//(3)	If there are not enough unused clusters to write the file, return false.
+
+	
+
+	if (numberBytes > remainCount)
+		return false;
+
+
+
+	//(4)	to write / update the file name, extension, date, time, file length and first cluster address into the first unused entry in the File Directory,
+	//4.1 look for an unused entry in the directory
+		for (i = 0; i < 4; i++) {
+			if (fileDirectory[i][0] == 0) break;         //i = sector
+		}
+		//3.2 if not found, return false,
+		if (i == 4) return false;
+
+
+		//3.3 if found, write all file info into the entry
+		//write file name
+		for (int j = 0; j < 8; j++)
+		{
+			fileDirectory[i][j] = filename[j];      //1st 8 bit is file name
+		}
+
+		//write time
+		int time;
+		time = hour + minute + second / 2;
+		fileDirectory[i][22] = (time >> 8);
+		fileDirectory[i][23] = (time & 0x00ff);
+
+		//write date
+		int date;
+		date = (year - 1980) + month + day;
+		fileDirectory[i][24] = (date >> 8);      //first 8 bits
+		fileDirectory[i][25] = (date & 0x00ff);     //last 8 bits
+
+
+		//write first sector address
+		fileDirectory[i][26] = firstClusterAddress & 0x00FF;
+		fileDirectory[i][27] = (firstClusterAddress >> 8) & 0x00FF;
+
+		//write file length
+		for (int k = 28; k < 32; k++)
+		{
+			fileDirectory[i][k] = numberBytes;
+		}
+
+		//retun true.
+		return true;
+		
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void FileDirectory::printClusters(char filename[])
+{
+	//	 purpose : to print all the clusters of a file.
+	// (1)	to check if the file to be printed, filename[], is in the Directory.If not, return false.
+	int i, j;
+	
+	bool nameCheck = true;
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 8; j++)
+		{
+			if (fileDirectory[i][j] != filename[j]) break;
+		}
+		if (j == 8) break;
+	}
+	//3.2 if not found, return false,
+	if (i == 4) nameCheck = false;
+
+
+	//(2)	use the file name to get the file information from the File Directory, including the first cluster address,
+    read(filename);
+
+	//write first sector address
+	for (int x = 0; x < 255; x++) {
+		if (FAT16[x] == 0 || FAT16[x] == 1) {
+			firstClusterAddress = x;
+			break;
+		}
+	}
+	fileDirectory[i][26] = firstClusterAddress & 0x00FF;
+	fileDirectory[i][27] = (firstClusterAddress >> 8) & 0x00FF;
+	//(3)	use the first cluster address to get all cluster addresses from the FAT - 16,
+	for (int i = 0; sectors[i] != EOFile; i++)
+	{
+		FAT16[(sectors[i])] = sectors[i + 1];
+	}
+	FAT16[sectors[i]] = EOFile;//write the End of File into the last sector of FAT16.
+
+	for (int s = 0; s < 256; s++)
+		cout << s << " " << sectors[s];
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void FileDirectory::printDirectory(char filename[])
+{
+	//purpose: prints all the  files of the directory.
+			//(1)	use the file name to get the file information from the File Directory, including the first cluster address,
+	int i, j;
+	
+	bool nameCheck = true;
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 8; j++)
+		{
+			if (fileDirectory[i][j] != filename[j]) break;
+		}
+		if (j == 8) break;
+	}
+	//3.2 if not found, return false,
+	if (i == 4) nameCheck = false;
+
+	//write first sector address
+	int firstClusterAddress;
+	for (int x = 0; x < 255; x++) {
+		if (FAT16[x] == 0 || FAT16[x] == 1) {
+			firstClusterAddress = x;
+			break;
+		}
+	}
+	fileDirectory[i][26] = firstClusterAddress & 0x00FF;
+	fileDirectory[i][27] = (firstClusterAddress >> 8) & 0x00FF;
+	//(3)	use the first cluster address to get all cluster addresses from the FAT - 16,
+	for (int i = 0; sectors[i] != EOFile; i++)
+	{
+		FAT16[(sectors[i])] = sectors[i + 1];
+	}
+	FAT16[sectors[i]] = EOFile;//write the End of File into the last sector of FAT16.
+
+	for (int section = 0; section < 5; section++)
+	{
+		for (int j = 0; j < 8; j++)
+			cout << " " << fileDirectory[section][j] << endl;
+	}
+}
+
+void FileDirectory::printData(char filename[])
+{
+	//purpose: to print the data of a file.
+	// (1)	use the file name to get the file information from the File Directory, including the first cluster address,
+	read(filename);
+
+	// (2)	use the first cluster address to get all cluster addresses from the FAT - 16,
+	//purpose: to write numberBytes bytes of data from data[] array into the file with the specified file name
+	int sectors[256];
+
+	//(0)	to look for the first unused entry(0 or 1) in the FAT - 16, and use it as the First Cluster Address.
+	int firstClusterAddress;
+	for (int x = 1; x < 255; x++) {          //why not x = 0?, what is FAT[0]
+		if (FAT16[x] == 0 || FAT16[x] == 1) {
+			firstClusterAddress = x;
+			break;
+		}
+	}
+	int i;
+	//(1) wrte next sector addresses into FAT16.
+	for (i = 0; sectors[i] != EOFile; i++)
+	{
+		FAT16[(sectors[i])] = sectors[i + 1];
+	}
+	FAT16[sectors[i]] = EOFile;//write the End of File into the last sector of FAT16.
+	//  (3)	use cluster address to read the data of the file.Use the file length to print these data in hexadecimal format.
+	//write file length
+	
+	for (int k = 28; k < 32;i++)
+		cout << fileDirectory[i][k] << endl;
+}
+
+
+
+
+/*	//(1)	to look for the next unused entry(0 or 1) in the FAT - 16, and use it as the Next Cluster Address, and write its value into the FAT - 16.
+	int nextClusterAddress[256] = {};
+
+	for (int clusterIndex = 0; clusterIndex < numberBytes; clusterIndex++){
+		for (int y = firstClusterAddress + 1; y < 255; y++){
+			if (FAT16[y] == 0 || FAT16[y] == 1){
+				nextClusterAddress[clusterIndex] = y;
+
+				break;
+			}
+		}
+	}
+
+	//(2)	Repeat Step 2 until all clusters are found and the FAT - 16 is updated.
+	for (int x = 0; x < numberBytes; x++)
+	{
+		if (x == 0)
+		{
+			FAT16[firstClusterAddress] = nextClusterAddress[x];
+		}
+		else if (x == numberBytes - 1)
+		{
+			FAT16[nextClusterAddress[x - 1]] = 255;
+		}
+		else
+		{
+			FAT16[nextClusterAddress[x - 1]] = nextClusterAddress[x];
+
+		}
+	}*/
